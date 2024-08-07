@@ -13,6 +13,7 @@ pip install -r requirements.txt
 
 ## Preparation
 Follow the data downloading and preprocessing process as in [SmallCap](https://github.com/RitaRamo/smallcap).
+A preprocessed larger list of retrieved captions can be downloaded [here](https://drive.google.com/file/d/17OdjGGTr-6dDPhSvQ1IQM8QOa3_Ry42K/view?usp=sharing). You can also follow the [instructions](https://github.com/RitaRamo/smallcap) to retrieve captions by yourself.
 
 ### Preprocess
 ```
