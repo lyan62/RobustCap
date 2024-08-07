@@ -12,8 +12,8 @@ dataDir='coco-caption'
 #dataType = sys.argv[1]
 algName = 'fakecap'
 subtypes=['results', 'evalImgs', 'eval']
-annFile = sys.argv[1] # "/projects/nlp/people/rdp455/smallcap/coco-caption/annotations/captions_testKarpathy.json"
-resFile = sys.argv[2] #"/projects/nlp/people/rdp455/smallcap/baseline/rag_7M_gpt2/checkpoint-88560/test_preds.json" 
+annFile = sys.argv[1] # "captions_testKarpathy.json"
+resFile = sys.argv[2] # "test_preds.json" 
 
 # pdb.set_trace()
 coco = COCO(annFile)
