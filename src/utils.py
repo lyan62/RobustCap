@@ -25,7 +25,7 @@ def get_permute(l):
     return permuted_cap
 
 def build_infix(retrieved_caps, k, order="default", seed=42):
-    if order == "shuffle":
+    if order == "sample":
         random.seed(seed)
         ## random select k caps from retrieved caps
         if len(retrieved_caps) >= k:
@@ -34,7 +34,7 @@ def build_infix(retrieved_caps, k, order="default", seed=42):
         else:
             random.shuffle(retrieved_caps)
             infix = '\n\n'.join(retrieved_caps) + '.'   
-    elif order == "m-shuffle": # mixed shuffle
+    elif order == "c-samplek": # mixed shuffle
         assert k > 1
         if len(retrieved_caps) >= k: # mixed shuffle, 1 top + 3 random
             
@@ -58,7 +58,7 @@ def build_infix(retrieved_caps, k, order="default", seed=42):
 
 
 def prep_strings(text, tokenizer, template=None, retrieved_caps=None, k=None, is_test=False, max_length=None, 
-                add_reg_tokens=False, num_reg_tokens=4, order="default", seed=42, drop=0):
+                 order="default", seed=42, drop=0):
 
     if is_test:
         padding = False
@@ -73,12 +73,7 @@ def prep_strings(text, tokenizer, template=None, retrieved_caps=None, k=None, is
         else:
             infix = build_infix(retrieved_caps, k, order=order, seed=seed)
             
-            if add_reg_tokens:
-                for i in range(num_reg_tokens):
-                    reg_prefix = "".join(tokenizer.special_tokens_map["additional_special_tokens"][:i+1])
-                prefix = reg_prefix + template.replace('||', infix)
-            else:
-                prefix = template.replace('||', infix)
+            prefix = template.replace('||', infix)
     else:
         prefix = SIMPLE_PREFIX
 
@@ -111,9 +106,6 @@ def prep_strings(text, tokenizer, template=None, retrieved_caps=None, k=None, is
         return input_ids
     else:  
         return input_ids, label_ids
-
-
-
 
 def prep_mixed_strings(text, tokenizer, template=None, retrieved_caps=None, irrelevant_caps=None, k=None, is_test=False, max_length=None, p=0.2):
     """
@@ -187,168 +179,24 @@ def prep_mixed_strings(text, tokenizer, template=None, retrieved_caps=None, irre
         return input_ids
     else:  
         return input_ids, label_ids
-    
-    
-def create_reason_prefix(cap_list, template):
-    infix = '\n\n'.join(cap_list) + '.' 
-    prefix = template.replace('||', infix)
-    return prefix
-
-def add_cap_idx(cap_list, use_cap_tokens=False):
-    if use_cap_tokens:
-        indexed_caps_list = ["<cap" + str(idx) + ">" + cap for (idx, cap) in enumerate(cap_list)]
-    else:
-        indexed_caps_list = ["(" + str(idx) + ") " + cap for (idx, cap) in enumerate(cap_list)]
-    return indexed_caps_list
-
-def create_reason_str(caps_indices, use_cap_tokens=False):
-    if use_cap_tokens:
-        # reason_str = '<sor>' + ' '.join(['<cap' + str(cap_idx) + '>' for cap_idx in caps_indices]) + '<eor>' + '<pred>'
-        reason_str = '<sor>' + ' '.join(['<cap' + str(cap_idx) + '>' for cap_idx in caps_indices]) + '<eor>' # + '<pred>'
-    else:
-        reason_str = ','.join(['(' + str(cap_idx) + ')' for cap_idx in caps_indices]) + '.'
-    return reason_str
 
 
-def prep_reason_strings(text, tokenizer, template=None, retrieved_caps=None, irrelevant_caps=None, k=None, 
-                        is_test=False, max_length=None, use_cap_tokens=False, in_prepare=False):
-    """
-    prepare input_ids and label_ids for mixed retrieval caps with reasoning intermediate prompt
-    """
-    if is_test:
-        padding = False
-        truncation = False
-    else:
-        padding = True 
-        truncation = True 
-    
-    if is_test:
-        # build prompt and input_ids
-        if retrieved_caps is not None:
-            indexed_caps_list = add_cap_idx(retrieved_caps[:k], use_cap_tokens=use_cap_tokens)
-            prefix = create_reason_prefix(indexed_caps_list, template)
-        else:
-            prefix = SIMPLE_PREFIX
-        prefix_ids = tokenizer.encode(prefix)
-        
-    else:
-        # train
-        # pdb.set_trace()
-        if retrieved_caps is not None:
-            ## retrieved cap order wise manipulation
-            max_irr_caps = random.randint(1, k // 2)  # number of irrelevant caps not exceed k/2
-            if len(retrieved_caps) >= k and len(irrelevant_caps) >= max_irr_caps and not in_prepare:
-                    # random select indexes for irrelevant caps
-                irr_indices = random.sample(range(k), max_irr_caps)
-                caps_indices = [idx for idx in range(k) if idx not in irr_indices]
-                
-                provided_caps_list = retrieved_caps[:k]
-                # replace the relevant caps with irrelevant caps
-                for idx, irr_idx  in enumerate(irr_indices):
-                    provided_caps_list[irr_idx] = irrelevant_caps[idx]
-                
-            else:
-                # if the number of retrieved caps or irrelevant caps is not enough, we use the original caps
-                provided_caps_list = retrieved_caps[:k]
-                caps_indices = list(range(len(provided_caps_list)))
-            
-            # build prompt
-            #["(" + str(idx) + ") " + cap for (idx, cap) in enumerate(provided_caps_list)]
-            indexed_caps_list = add_cap_idx(provided_caps_list, use_cap_tokens=use_cap_tokens)
-            prefix = create_reason_prefix(indexed_caps_list, template)
-            if in_prepare:
-                prefix += '<pred>'
-            
-            # build reason string
-            if not in_prepare:    
-                reason_str = create_reason_str(caps_indices, use_cap_tokens=use_cap_tokens) #','.join(['(' + str(cap_idx) + ')' for cap_idx in caps_indices]) + '.'
-                reason_ids = tokenizer.encode(reason_str, add_special_tokens=False) # indexes of the useful retrieved caps
-                max_length += 6 
-        else:
-            prefix = SIMPLE_PREFIX
-
-        prefix_ids = tokenizer.encode(prefix)
-        len_prefix = len(prefix_ids)
-        
-        # pdb.set_trace()
-        text_ids = tokenizer.encode(text, add_special_tokens=False)
-        if truncation:
-            text_ids = text_ids[:CAPTION_LENGTH]
-        
-        if retrieved_caps is not None and not in_prepare:
-            # we ignore the prefix (minus one as the first subtoken in the prefix is not predicted)
-            label_ids = [-100] * (len_prefix - 1) + text_ids + reason_ids + [tokenizer.eos_token_id]   
-        else:
-            label_ids = [-100] * (len_prefix - 1) + text_ids + [tokenizer.eos_token_id] 
-        
-        if padding:
-            label_ids += [-100] * (max_length - len(label_ids))
-    
-        if len(label_ids) > max_length:
-            label_ids = label_ids[:max_length]
-    
-    # debug
-    # print("prefix: ", prefix, "reason str: ", reason_str, "gt: ", text)
-    # print("prefix ids: ", prefix_ids, "reason ids: ", reason_ids, "gt ids: ", text_ids)
-    
-    input_ids = prefix_ids 
-    if padding:
-        input_ids += [tokenizer.pad_token_id] * (max_length - len(input_ids))
-    # double check length
-    if len(input_ids) > max_length:
-        input_ids = input_ids[:max_length]
-                
-    if is_test:
-        return input_ids
-    else:  
-        return input_ids, label_ids
-    
-    
 def postprocess_preds(pred, tokenizer, args):
-    if args.robust_prompting:
-        if args.use_cap_tokens:
-            splitted_pred = re.split("<sor>|<eor><pred>", pred)
-            # splitted_pred = re.split("<sor>|<eor>", pred)
-            if len(splitted_pred) == 3:
-                reason_str = splitted_pred[-2].strip()
-                pred = splitted_pred[-1].strip()
-            else:
-                pred = pred.split(">")[-1].strip()
-                reason_str = pred.split("The useful captions are")[-1].rstrip(pred)
-        else:
-            split_str = "The useful captions are"
-            pred = pred.split(split_str)[-1].strip()
-            try:
-                splitted = pred.split(").")
-                pred = splitted[-1]
-                reason_str = ").".join([x for x in splitted[:-1] if x !=[""]]) \
-                    .lstrip(tokenizer.bos_token) \
-                    .rstrip(tokenizer.eos_token)
-            except:
-                pred = pred.strip()
-                reason_str = ""
-    else:
-        split_str = SIMPLE_PREFIX
-        pred = pred.split(split_str)[-1]
-    # print(pred)
+    split_str = SIMPLE_PREFIX
+    pred = pred.split(split_str)[-1]
+    
     pred = pred.replace(tokenizer.pad_token, '')
     if pred.startswith(tokenizer.bos_token):
         pred = pred[len(tokenizer.bos_token):]
     if pred.endswith(tokenizer.eos_token):
         pred = pred[:-len(tokenizer.eos_token)]
     
-    if args.robust_prompting:
-        return pred, reason_str
-    else:
-        return pred
+    return pred
 
 class TrainDataset(Dataset):
     def __init__(self, df, features_path, tokenizer, 
                  rag=False, template_path=None, k=None, 
-                 max_caption_length=25, order="default", add_reg_tokens=False, 
-                 num_reg_tokens=4, robust_prompting=False, 
-                 adversarial_training=False, use_cap_tokens=False,
-                 in_prepare=False, p=0.2, use_ret_embeds=False, seed=42, drop_token=0):
+                 max_caption_length=25, order="default", seed=42, drop_token=0):
         self.df = df
         self.tokenizer = tokenizer
         self.features = h5py.File(features_path, 'r')
@@ -366,20 +214,10 @@ class TrainDataset(Dataset):
             self.max_target_length = CAPTION_LENGTH
         self.rag = rag
         self.order = order
-        self.add_reg_tokens = add_reg_tokens
-        self.num_reg_tokens = num_reg_tokens
-        self.robust_prompting = robust_prompting
-        self.adversarial_training = adversarial_training
-        self.use_cap_tokens = use_cap_tokens
-        self.in_prepare = in_prepare
-        self.p = p
         
         # ret_embeds
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.clip_model, _ = clip.load("RN50x64", device=self.device, download_root="/scratch/project/dd-23-80/code/RobCap")
-        self.use_ret_embeds = use_ret_embeds
-        if self.use_ret_embeds:
-            self.k=k
             
         # ret caps order
         self.order = order
@@ -391,7 +229,7 @@ class TrainDataset(Dataset):
         return len(self.df)
 
     def get_ret_embeddings(self, idx):
-        if self.order == "shuffle":
+        if self.order == "sample":
             caps = random.sample(self.df['caps'][idx], self.k) # random select k caps
         else:
             caps = self.df['caps'][idx][:self.k] # topk caps
@@ -405,36 +243,18 @@ class TrainDataset(Dataset):
         text = self.df['text'][idx]
         if self.rag: 
             caps = self.df['caps'][idx]
-            if self.robust_prompting: 
-                irrelevant_caps = self.df['irrelevant_caps'][idx]
-                decoder_input_ids, labels = prep_reason_strings(text, self.tokenizer, template=self.template,
-                                                               retrieved_caps=caps, irrelevant_caps=irrelevant_caps, 
-                                                               k=self.k, max_length=self.max_target_length, 
-                                                               use_cap_tokens=self.use_cap_tokens,
-                                                               in_prepare=self.in_prepare)
-            elif self.adversarial_training: 
-                # retrieved caps also include irrelevant caps
-                irrelevant_caps = self.df['irrelevant_caps'][idx]
-                decoder_input_ids, labels = prep_mixed_strings(text, self.tokenizer, template=self.template,
-                                                               retrieved_caps=caps, irrelevant_caps=irrelevant_caps, 
-                                                               k=self.k, max_length=self.max_target_length, p=self.p)
-            else: 
-                # default setting
-                if self.k == -1: # random
-                    k = random.randint(0, 4)
-                    order = "shuffle"
-                else:
-                    k = self.k
-                    order = self.order
-                decoder_input_ids, labels = prep_strings(text, self.tokenizer, template=self.template,
-                                                        retrieved_caps=caps, k=k, max_length=self.max_target_length,
-                                                        add_reg_tokens=self.add_reg_tokens,
-                                                        num_reg_tokens=self.num_reg_tokens,
-                                                        order=order, seed=self.seed, drop=self.drop_token)
+            # default setting
+            if self.k == -1: # random
+                k = random.randint(0, 4)
+                order = "sample"
+            else:
+                k = self.k
+                order = self.order
+            decoder_input_ids, labels = prep_strings(text, self.tokenizer, template=self.template,
+                                                    retrieved_caps=caps, k=k, max_length=self.max_target_length,
+                                                    order=order, seed=self.seed, drop=self.drop_token)
         else:
             decoder_input_ids, labels = prep_strings(text, self.tokenizer, max_length=self.max_target_length, 
-                                                     add_reg_tokens=self.add_reg_tokens,
-                                                     num_reg_tokens=self.num_reg_tokens,
                                                      order=self.order, seed=self.seed)
         # load precomputed features
         encoder_outputs = self.features[self.df['cocoid'][idx]][()]
@@ -443,10 +263,6 @@ class TrainDataset(Dataset):
         encoding = {"encoder_outputs": torch.tensor(encoder_outputs), 
                     "decoder_input_ids": torch.tensor(decoder_input_ids),
                     "labels": torch.tensor(labels)}
-        
-        if self.use_ret_embeds:
-            encoding["ret_embeds"] = self.get_ret_embeddings(idx)
-            encoding["labels"] = torch.tensor([-100]*self.k+labels)
 
         return encoding
 
