@@ -16,10 +16,9 @@ from src.xglm import ThisXGLMConfig, ThisXGLMForCausalLM
 from src.opt import ThisOPTConfig, ThisOPTForCausalLM
 
 from src.utils import *
-from peft import LoraConfig, get_peft_model
 
 import os
-# os.environ["WANDB_PROJECT"] = "robcap-k"
+
 os.environ["WANDB_DISABLED"] = "true"
 
 # for attention with 28M params, we devide the attention dimensions by 1
@@ -31,15 +30,8 @@ CAPTION_LENGTH = 25
 
 def load_model(args, checkpoint_path):
     config = AutoConfig.from_pretrained(checkpoint_path + '/config.json')
-    if args.add_vision_reg:
-        model = SmallCap.from_encoder_decoder_pretrained(
-        args.encoder_name, args.decoder_name, 
-        cross_attention_reduce_factor=config.decoder.cross_attention_reduce_factor,
-        add_vision_reg=args.add_vision_reg)
-        model.load_state_dict(torch.load(checkpoint_path + '/pytorch_model.bin'))
-        # pdb.set_trace()
-    else:
-        model = AutoModel.from_pretrained(checkpoint_path)
+    model = AutoModel.from_pretrained(checkpoint_path)
+    
     # model.config = config
     # model.to(args.device)
     return model
@@ -90,34 +82,12 @@ def get_model_and_auxiliaries(args):
     tokenizer.pad_token = PAD_TOKEN
     tokenizer.eos_token = EOS_TOKEN
     
-    # pdb.set_trace()
-    # if args.continue_pretrain:
-    #     model = load_model(args, args.checkpoint_path)
-    # else:
-    if args.resume_from_checkpoint and args.adapter_name is not None:
+    if args.resume_from_checkpoint:
         model = load_model(args, args.resume_from_checkpoint)
-        if "lora" in args.adapter_name:
-            lora_config = LoraConfig(
-                r=16,
-                lora_alpha=32,
-                target_modules=["fc1", "fc2"], #["self_attn.q_proj", "self_attn.v_proj"],
-                lora_dropout=0.05,
-                bias="none",
-                task_type="CAUSAL_LM")
-        print("applying LoRA to decoder...")
-        model.decoder = get_peft_model(model.decoder, lora_config)
     else:
         model = SmallCap.from_encoder_decoder_pretrained(
             args.encoder_name, args.decoder_name, 
-            cross_attention_reduce_factor=cross_attention_reduce_factor,
-            add_vision_reg=args.add_vision_reg,
-            adapter_name=args.adapter_name,
-            add_selection_layer=args.add_selection_layer,
-            ret_mlp=args.use_ret_embeds,
-            xa_first=args.xa_first)
-        # pdb.set_trace()
-    if args.add_vision_reg:
-        print(model)
+            cross_attention_reduce_factor=cross_attention_reduce_factor)
         
     
     model.config.vocab_size = model.config.decoder.vocab_size
@@ -125,77 +95,32 @@ def get_model_and_auxiliaries(args):
     model.config.pad_token_id = tokenizer.pad_token_id 
     model.config.eos_token_id = tokenizer.eos_token_id 
     
-    if args.add_lm_reg_tokens:
-        special_tokens_dict = {'additional_special_tokens': ['[REG1]','[REG2]','[REG3]','[REG4]']}
-        num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-        model.decoder.resize_token_embeddings(len(tokenizer))
-        
-    if args.robust_prompting and args.use_cap_tokens:
-        special_tokens_dict = {'additional_special_tokens': ['<sor>', '<eor>', '<cap0>', '<cap1>', '<cap2>', '<cap3>']} # start of reasoning, end of reasoning
-        num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-        # print(len(tokenizer))
-        # if not args.resume_from_checkpoint:
-        #     model.encoder.resize_token_embeddings(len(tokenizer))
-        model.decoder.resize_token_embeddings(model.decoder.model.decoder.embed_tokens.weight.shape[0] + num_added_toks)
-        # if "2.7b" in args.decoder_name:
-        #     model.decoder.resize_token_embeddings(50279)
-        # model.decoder.resize_token_embeddings(len(tokenizer))
-            
-
     if not args.disable_rag:
         model.config.k = args.k
         model.config.retrieval_encoder = args.retrieval_encoder   
     model.config.max_length = CAPTION_LENGTH   
     model.config.rag = not args.disable_rag
     
-    # pdb.set_trace()
     print("with out freezing or adapter....")
     print_trainable_parameters(model)
     print("*"*100)
-    #print("model",model)
-    #print(stop)
+   
     # freeze parameters
-    if args.add_vision_reg:
-        for name, param in model.encoder.named_parameters():
-            if name not in ['embeddings.reg_embedding', 'embeddings.reg_position_embedding.weight'] :
-                param.requires_grad = False
-    else:
-        for param in model.encoder.parameters():
-            param.requires_grad = False
+    for param in model.encoder.parameters():
+        param.requires_grad = False
 
     if "xglm" in args.decoder_name or "opt" in args.decoder_name:
         if not args.train_decoder:
-            if args.adapter_name is not None: # update adapters
-                update_xattn = args.update_xattn
-                for name, param in model.decoder.named_parameters():
-                    adapter_condition = args.adapter_name in name
-                    encoder_attn_condition = "encoder_attn" in name
-                    if adapter_condition or (update_xattn and encoder_attn_condition):
-                        param.requires_grad = True
-                    else:
-                        param.requires_grad = False
-            elif args.add_selection_layer:
-                for name, param in model.decoder.named_parameters():
-                    if ('encoder_attn' not in name) and "poly_code_embeddings" not in name:
-                        param.requires_grad = False
-            elif args.use_ret_embeds:
-                for name, param in model.decoder.named_parameters():
-                    if 'encoder_attn' in name or "ret_mlp" in name:
-                        param.requires_grad = True
-                    else:
-                        param.requires_grad = False    
-            else:
-                for name, param in model.decoder.named_parameters():
-                    if 'encoder_attn' not in name:
-                        param.requires_grad = False
+            for name, param in model.decoder.named_parameters():
+                if 'encoder_attn' not in name:
+                    param.requires_grad = False
 
     else:
         if not args.train_decoder:
             for name, param in model.decoder.named_parameters():
                 if 'crossattention' not in name:
                     param.requires_grad = False
-    # pdb.set_trace()
-    # count trainable parameters
+    
     print("after freezing/adapter....")
     print("*"*100)
     print_trainable_parameters(model)
@@ -206,10 +131,7 @@ def get_model_and_auxiliaries(args):
     return model, tokenizer, feature_extractor
 
 def get_data(tokenizer, max_length, args):
-    if args.robust_prompting or args.adversarial_training:
-        data = load_mixed_data_for_training(args.annotations_path, args.captions_path)
-    else:
-        data = load_data_for_training(args.annotations_path, args.captions_path)
+    data = load_data_for_training(args.annotations_path, args.captions_path)
     
     train_df = pd.DataFrame(data['train'])
 
@@ -231,14 +153,9 @@ def get_data(tokenizer, max_length, args):
                             template_path=args.template_path,
                             k=args.k,
                             max_caption_length=max_length,
-                            add_reg_tokens=args.add_lm_reg_tokens,
-                            num_reg_tokens=args.num_lm_reg_tokens,
-                            robust_prompting=args.robust_prompting,
-                            adversarial_training=args.adversarial_training,
                             use_cap_tokens=args.use_cap_tokens,
                             in_prepare=args.in_prepare,
-                            p=args.p, use_ret_embeds=args.use_ret_embeds,
-                            order=args.order, seed=args.seed, drop_token=args.drop_token)
+                            p=args.p, order=args.order, seed=args.seed)
 
     return train_dataset
 
@@ -278,18 +195,10 @@ def main(args):
         train_dataset=train_dataset,
         tokenizer=feature_extractor,
     )
-    if args.resume_from_checkpoint and args.adapter_name is not None:
-        trainer.train()
-    else:
+    if args.resume_from_checkpoint:
         trainer.train(args.resume_from_checkpoint)
     
-    ## save adapter after trained
-    if args.adapter_name is not None:
-        model.decoder.save_pretrained(os.path.join(output_dir, "decoder_sa_lora"), save_adapter=True, save_config=True)
-        # merge lora to model, save again as a whole
-        model.decoder = model.decoder.merge_and_unload()
-        trainer.save_model(os.path.join(output_dir, "encoder_decoder_sa_lora_latest"))
-
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Model Training')
     parser.add_argument("--features_dir", type=str, default="features/", help="Directory where cached input image features are stored")
@@ -318,30 +227,13 @@ if __name__ == '__main__':
     parser.add_argument("--order", type=str, default="default", choices=['default', 'shuffle', 'permute', 'reverse', 'm-shuffle', 'topk_reverse'], 
                         help="order sensitivity, choices from ['shuffle', 'permute', 'reverse']")
     
-    # robust training methods
-    parser.add_argument("--robust_prompting", action="store_true", default=False, help="If add reasoning step training")
-    parser.add_argument("--adversarial_training", action="store_true", default=False, help="If mix in irrelevant caps during training")
-    
-    # reg tokens
-    parser.add_argument("--add_lm_reg_tokens", action="store_true", default=False, help="If true add reg tokens to the tokenizer and the input of the decoder")
-    parser.add_argument("--num_lm_reg_tokens", type=int, default=4, help="add reg tokens to the tokenizer and the input of the decoder")
-    parser.add_argument("--add_vision_reg", action="store_true", default=False, help="If true add reg tokens to the encoder")
-    parser.add_argument("--continue_pretrain", action="store_true", default=False, help="If true add reg tokens to the encoder")
     parser.add_argument("--checkpoint_path", required=False, help="checkpoint_path for continue_pretrain")
     parser.add_argument("--resume_from_checkpoint", required=False, help="checkpoint_path for continue_pretrain")
     parser.add_argument("--use_cap_tokens", action="store_true", required=False, help="add special tokens for caption idxes and reasoning")
     parser.add_argument("--in_prepare", action="store_true", required=False, help="no reasoning step in prepare")
     parser.add_argument("--p", type=float, required=False, default=0.2, help="ratio of data to be replaced with irrelevant caps")
     
-    # adapter
-    parser.add_argument("--adapter_name", type=str, required=False, default=None, help="adapter name: e.g. ybelkada/opt-350m-lora")
-    parser.add_argument("--update_xattn", type=bool, default=True, help="If true update xattn")
-    parser.add_argument("--add_selection_layer", action="store_true", default=False, help="If true use ploy_m to filter input captions")
-    parser.add_argument("--use_ret_embeds", action="store_true", default=False, help="If true use ret_embeds as input to decoder")
-    parser.add_argument("--xa_first", action="store_true", default=False, help="If true put xa layer before sa")
     parser.add_argument("--seed", type=int, default=42, help="random seed")
-    
-    parser.add_argument("--drop_token", type=float, default=0.0, help="If >0  drop token in the ret caps")
     
     args = parser.parse_args()
 
