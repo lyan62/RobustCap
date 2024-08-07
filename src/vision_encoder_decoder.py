@@ -164,14 +164,12 @@ class SmallCapConfig(VisionEncoderDecoderConfig):
         
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config: CLIPVisionConfig, 
-                 add_reg:Optional[bool] = False,
                  num_reg_tokens:Optional[int] = 1):
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
-        self.add_reg = add_reg
         self.num_reg_tokens = num_reg_tokens
 
         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
@@ -187,10 +185,6 @@ class CLIPVisionEmbeddings(nn.Module):
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
-        if self.add_reg:
-            self.reg_embedding = nn.Parameter(torch.randn(self.num_reg_tokens, self.embed_dim))
-            self.reg_position_embedding = nn.Embedding(self.num_reg_tokens, self.embed_dim)
-            self.register_buffer("reg_position_ids", torch.arange(self.num_reg_tokens).expand((1, -1)), persistent=False)
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
@@ -203,9 +197,6 @@ class CLIPVisionEmbeddings(nn.Module):
         class_embeds = self.class_embedding.expand(batch_size, 1, -1)
         embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
         
-        if self.add_reg:
-            reg_embeds = self.reg_embedding.expand(batch_size, self.num_reg_tokens, -1)
-            embeddings = torch.cat([embeddings, reg_embeds], dim=1)
         embeddings = embeddings + torch.cat([self.position_embedding(self.position_ids), self.reg_position_embedding(self.reg_position_ids)], dim=1)
         
         return embeddings
@@ -240,8 +231,7 @@ class SmallCap(PreTrainedModel):
         self,
         config: Optional[PretrainedConfig] = None,
         encoder: Optional[PreTrainedModel] = None,
-        decoder: Optional[PreTrainedModel] = None,
-        add_vision_reg: Optional[bool] = False
+        decoder: Optional[PreTrainedModel] = None
     ):
         if config is None and (encoder is None or decoder is None):
             raise ValueError("Either a configuration or an encoder and a decoder has to be provided.")
@@ -272,8 +262,6 @@ class SmallCap(PreTrainedModel):
             decoder = AutoModelForCausalLM.from_config(config.decoder)
 
         self.encoder = encoder.vision_model
-        if add_vision_reg:
-            self.encoder.embeddings = CLIPVisionEmbeddings(encoder.config.vision_config, add_reg=add_vision_reg)
         self.encoder.main_input_name = 'pixel_values'
         self.decoder = decoder
         # make sure that the individual model's config refers to the shared config
@@ -310,11 +298,6 @@ class SmallCap(PreTrainedModel):
         encoder_pretrained_model_name_or_path: str = None,
         decoder_pretrained_model_name_or_path: str = None,
         cross_attention_reduce_factor: int = None,
-        add_vision_reg: bool = False,
-        adapter_name: Optional[str] = None,
-        add_selection_layer: bool = False,
-        xa_first: bool = False,
-        ret_mlp: bool = False,
         *model_args,
         **kwargs
     ) -> PreTrainedModel:
@@ -455,9 +438,6 @@ class SmallCap(PreTrainedModel):
                     decoder_config.add_cross_attention = True
                 decoder_config.encoder_hidden_size = encoder.config.vision_config.hidden_size
                 decoder_config.cross_attention_reduce_factor = cross_attention_reduce_factor
-                decoder_config.poly_m = 8 if add_selection_layer else 0
-                decoder_config.xa_first = xa_first
-                decoder_config.ret_mlp = ret_mlp 
                 kwargs_decoder["config"] = decoder_config
             
             if kwargs_decoder["config"].is_decoder is False or kwargs_decoder["config"].add_cross_attention is False:
@@ -484,21 +464,7 @@ class SmallCap(PreTrainedModel):
         # make sure input & output embeddings is not tied
         config.tie_word_embeddings = False
         
-        # add LoRA to decoder
-        # pdb.set_trace()
-        if adapter_name is not None:
-            if "lora" in adapter_name:
-                lora_config = LoraConfig(
-                            r=16,
-                            lora_alpha=32,
-                            target_modules=["fc1", "fc2"], #["self_attn.q_proj", "self_attn.v_proj"],
-                            lora_dropout=0.05,
-                            bias="none",
-                            task_type="CAUSAL_LM"
-                        )
-                decoder = get_peft_model(decoder, lora_config)
-
-        return cls(encoder=encoder, decoder=decoder, config=config, add_vision_reg=add_vision_reg)
+        return cls(encoder=encoder, decoder=decoder, config=config)
 
     def forward(
         self,
@@ -513,7 +479,6 @@ class SmallCap(PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        # ret_embeds=None,
         **kwargs,
     ):
         r"""
@@ -594,7 +559,6 @@ class SmallCap(PreTrainedModel):
             use_cache=use_cache,
             past_key_values=past_key_values,
             return_dict=return_dict,
-            # ret_embeds=ret_embeds,
             **kwargs_decoder,
         )
 
@@ -638,7 +602,6 @@ class SmallCap(PreTrainedModel):
             "encoder_outputs": encoder_outputs,
             "past_key_values": decoder_inputs["past_key_values"],
             "use_cache": use_cache,
-            # "ret_embeds": kwargs.get("ret_embeds")
         } 
         return input_dict
     

@@ -71,12 +71,10 @@ class ThisOPTConfig(OPTConfig):
     def __init__(
         self,
         cross_attention_reduce_factor = 1,
-        poly_m = 0,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.cross_attention_reduce_factor = cross_attention_reduce_factor
-        self.poly_m = poly_m
 
 class ThisOPTAttention(OPTAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
@@ -492,30 +490,8 @@ class XASA_OPTDecoderLayer(OPTDecoderLayer):
 class ThisOPTDecoder(OPTDecoder):
     def __init__(self, config):
         super().__init__(config)
-        
-        # add poly embeddings if poly_m > 0
-        self.poly_m = config.poly_m
-        if self.poly_m > 0:
-            self.poly_code_embeddings = nn.Embedding(self.poly_m, config.hidden_size)
-            # https://github.com/facebookresearch/ParlAI/blob/master/parlai/agents/transformer/polyencoder.py#L355
-            torch.nn.init.normal_(self.poly_code_embeddings.weight, config.hidden_size ** -0.5)
-        
-        try:   
-            if config.ret_mlp:
-                mid_size =  config.hidden_size//2
-                self.ret_mlp = nn.Sequential(
-                        nn.Linear(config.hidden_size, mid_size),
-                        nn.Tanh(),
-                        nn.Linear(mid_size, mid_size))
-            
-            # move xa first
-            if config.xa_first:
-                self.layers = nn.ModuleList([XASA_OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
-            else:
-                self.layers = nn.ModuleList([ThisOPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
-        except:
-            print("using default decoder layer, no xa_first or ret_mlp")
-            self.layers = nn.ModuleList([ThisOPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+
+        self.layers = nn.ModuleList([ThisOPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         
     def dot_attention(self, q, k, v):
         # q: [bs, poly_m, dim] or [bs, res_cnt, dim]
@@ -540,7 +516,6 @@ class ThisOPTDecoder(OPTDecoder):
         output_attentions = None,
         output_hidden_states = None,
         return_dict = None,
-        ret_embeds = None,
     ):
         r"""
         Args:
@@ -603,25 +578,10 @@ class ThisOPTDecoder(OPTDecoder):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids) # B,L,dim
         
+        # embed positions
+        if attention_mask is None:
+            attention_mask = torch.ones(inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
     
-        if ret_embeds is not None: 
-            if past_key_values is None:
-                ret_prefix = self.ret_mlp(ret_embeds) # bx k x H
-                if ret_prefix.size(0) != inputs_embeds.size(0):
-                    ret_prefix = ret_prefix.expand(inputs_embeds.size(0), ret_prefix.size(1), ret_prefix.size(2))
-                inputs_embeds = torch.concat([ret_prefix, inputs_embeds], dim=1) # bsz, L+k, H
-                input_shape = inputs_embeds.size()[:-1]
-        
-            # fix attention mask
-            if attention_mask is None:
-                attention_mask = torch.ones(inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
-            else:
-                attention_mask = torch.concat([torch.ones(attention_mask.size(0), ret_embeds.size(1), dtype=torch.bool, device=inputs_embeds.device), attention_mask], dim=-1)
-        else:
-            # embed positions
-            if attention_mask is None:
-                attention_mask = torch.ones(inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
-        
         # embed positions
         pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
@@ -634,24 +594,6 @@ class ThisOPTDecoder(OPTDecoder):
 
         hidden_states = inputs_embeds + pos_embeds # LxH 
         
-        # hidden_states = torch.concat([ret_prefix, hidden_states], dim=1) # bsz, L+k, H
-        # ret_mask = torch.zeros_like(attention_mask[...,:ret_prefix.size(1)], dtype=torch.float32).to(inputs_embeds.device) # bsz, 1, tgt_len, k
-        # attention_mask = torch.cat([ret_mask, attention_mask], dim=-1) # bsz, 1, tgt_len, L+k
-        
-        # pdb.set_trace()
-        if self.poly_m > 0:
-            poly_code_ids = torch.arange(self.poly_m, dtype=torch.long).to(input_ids.device)
-            poly_code_ids = poly_code_ids.unsqueeze(0).expand(inputs_embeds.size(0), self.poly_m)
-            poly_codes = self.poly_code_embeddings(poly_code_ids)
-            hidden_states = self.dot_attention(poly_codes, hidden_states, hidden_states) # B, poly_m, H
-            
-            # update attention mask to the same size as the new poly embs
-            attention_mask = torch.ones(hidden_states.shape[:2], dtype=torch.bool, device=inputs_embeds.device)
-            
-            attention_mask = self._prepare_decoder_attention_mask(
-                attention_mask, hidden_states.size()[:-1], hidden_states, past_key_values_length
-            )
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -746,40 +688,6 @@ class ThisOPTDecoder(OPTDecoder):
             attentions=all_self_attns,
             cross_attentions=all_cross_attentions,
         )
-        
-    # def prepare_inputs_for_generation(
-    #     self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, ret_embeds=None, **kwargs):
-    #     pdb.set_trace()
-    #     if past_key_values is not None:
-    #         past_length = past_key_values[0][0].shape[2]
-
-    #         # Some generation methods already pass only the last input ID
-    #         if input_ids.shape[1] > past_length:
-    #             remove_prefix_length = past_length
-    #         else:
-    #             # Default to old behavior: keep only final ID
-    #             remove_prefix_length = input_ids.shape[1] - 1
-
-    #         input_ids = input_ids[:, remove_prefix_length:]
-
-    #     # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
-    #     if inputs_embeds is not None and past_key_values is None:
-    #         model_inputs = {"inputs_embeds": inputs_embeds}
-    #     elif ret_embeds is not None:
-    #         model_inputs = {"ret_embeds": ret_embeds, "input_ids": input_ids}
-    #     else:
-    #         model_inputs = {"input_ids": input_ids}
-        
-    #     model_inputs.update(
-    #         {
-    #             "past_key_values": past_key_values,
-    #             "use_cache": kwargs.get("use_cache"),
-    #             "attention_mask": attention_mask,
-    #         }
-    #     )
-    #     return model_inputs
-        
-
 
 
 class ThisOPTModel(OPTModel):
@@ -801,8 +709,7 @@ class ThisOPTModel(OPTModel):
         use_cache = None,
         output_attentions = None,
         output_hidden_states = None,
-        return_dict = None,
-        ret_embeds = None,
+        return_dict = None
     ):
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -832,7 +739,6 @@ class ThisOPTModel(OPTModel):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            ret_embeds=ret_embeds,
             return_dict=return_dict,
         )
 
@@ -869,7 +775,6 @@ class ThisOPTForCausalLM(OPTForCausalLM):
         use_cache = None,
         output_attentions = None,
         output_hidden_states = None,
-        ret_embeds = None,
         return_dict = None,
     ) :
 
@@ -893,7 +798,6 @@ class ThisOPTForCausalLM(OPTForCausalLM):
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            ret_embeds=ret_embeds,
             return_dict=return_dict,
         )
 
