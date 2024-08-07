@@ -224,8 +224,8 @@ if __name__ == '__main__':
     parser.add_argument("--ablation_visual", action="store_true", default=False, help="Whether to blank visual features")
     
     # order sensitivity, choices from ["random", "forward", "backward", "reverse"]
-    parser.add_argument("--order", type=str, default="default", choices=['default', 'shuffle', 'permute', 'reverse', 'm-shuffle', 'topk_reverse'], 
-                        help="order sensitivity, choices from ['shuffle', 'permute', 'reverse']")
+    parser.add_argument("--order", type=str, default="default", choices=['default', 'sample', 'permute', 'reverse', 'c-samplek', 'topk_reverse'], 
+                        help="order sensitivity, choices from ['default', 'sample', 'permute', 'reverse', 'c-samplek', 'topk_reverse']")
     
     parser.add_argument("--checkpoint_path", required=False, help="checkpoint_path for continue_pretrain")
     parser.add_argument("--resume_from_checkpoint", required=False, help="checkpoint_path for continue_pretrain")
