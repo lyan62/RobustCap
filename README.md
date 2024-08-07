@@ -41,6 +41,39 @@ e.g. ```python src/run_eval.py coco-caption/annotations/captions_valKarpathy.jso
 - `get_attn_layer_distr.py` and `get_prompt_token_attn_distr.py` are helper scripts that extract maximum attention scores at a layerwise or a tokenwise manner for visualization use. (these might need to be organized later)
 
 
+## Train
+```
+export ORDER="sample"
+python train.py \
+  --experiments_dir $EXP \
+  --captions_path $CAPTIONS_PATH \
+  --decoder_name facebook/opt-350m \
+  --attention_size 1.75 \
+  --batch_size 64 \
+  --n_epochs 10 \
+  --order $ORDER \
+  --k 4 
+```
+
+## Eval
+```
+export ORDER="default"
+python infer.py --model_path $MODEL_PATH --checkpoint_path checkpoint-88560 \
+  --decoder_name "facebook/opt-350m" \
+  --captions_path $CAPTIONS_PATH \
+  --order $ORDER \
+  --outfile_postfix _$ORDER
+```
+
+and calculate scores with:
+
+```
+python src/run_eval.py \
+    coco-caption/annotations/captions_valKarpathy.json \
+   $MODEL_PATH/checkpoint-88560/val_coco_preds_$ORDER.json
+```
+
+
 
 
 
