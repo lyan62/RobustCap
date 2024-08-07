@@ -1,5 +1,5 @@
 # Robust-cap
-retrieval robust captioning 
+Impletation of paper [Understanding Retrieval Robustness for Retrieval-Augmented Image Captioning](https://arxiv.org/pdf/2406.02265) (ACL 2024).
 
 ## Dependencies
 
