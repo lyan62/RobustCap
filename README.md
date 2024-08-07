@@ -74,7 +74,15 @@ python src/run_eval.py \
 ```
 
 
-
+## Citation
+```
+@article{li2024understanding,
+  title={Understanding Retrieval Robustness for Retrieval-Augmented Image Captioning},
+  author={Li, Wenyan and Li, Jiaang and Ramos, Rita and Tang, Raphael and Elliott, Desmond},
+  journal={arXiv preprint arXiv:2406.02265},
+  year={2024}
+}
+```
 
 
 
