@@ -34,12 +34,13 @@ output results are saved in the same folder as the  `<PREDICTIONS_PATH>`
 
 e.g. ```python src/run_eval.py coco-caption/annotations/captions_valKarpathy.json baseline/rag_7M_gpt2/checkpoint-88560/val_preds_original.json```
 
-
-## Visualization
-- `src/vis` contains two notebook which visualizes the attention plots (`vis_attn.ipynb`) for decoder self attention and cross attention (`vis_cross_attn.ipynb`).
-
-- `get_attn_layer_distr.py` and `get_prompt_token_attn_distr.py` are helper scripts that extract maximum attention scores at a layerwise or a tokenwise manner for visualization use. (these might need to be organized later)
-
+## Pretrained model
+The pretrained model is on [huggingface](https://huggingface.co/lyan62/RobustCap/tree/main):
+```
+config = AutoConfig.from_pretrained('lyan62/RobustCap')
+model = AutoModel.from_pretrained('lyan62/RobustCap')
+model.config = config
+```
 
 ## Train
 ```
@@ -73,6 +74,10 @@ python src/run_eval.py \
    $MODEL_PATH/checkpoint-88560/val_coco_preds_$ORDER.json
 ```
 
+## Visualization (updating soon)
+- `src/vis` contains two notebook which visualizes the attention plots (`vis_attn.ipynb`) for decoder self attention and cross attention (`vis_cross_attn.ipynb`).
+
+- `get_attn_layer_distr.py` and `get_prompt_token_attn_distr.py` are helper scripts that extract maximum attention scores at a layerwise or a tokenwise manner for visualization use. (these might need to be organized later)
 
 ## Citation
 ```
