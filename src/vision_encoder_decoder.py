@@ -31,7 +31,6 @@ from transformers.models.vision_encoder_decoder.configuration_vision_encoder_dec
 from transformers import CLIPVisionConfig
 import inspect
 import pdb
-from peft import LoraConfig, get_peft_model
 from .gpt2 import ThisGPT2LMHeadModel
 from .gpt2 import ThisGPT2Config
 from .xglm import ThisXGLMForCausalLM
