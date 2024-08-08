@@ -12,8 +12,7 @@ pip install -r requirements.txt
 ```
 
 ## Preparation
-Follow the data downloading and preprocessing process as in [SmallCap](https://github.com/RitaRamo/smallcap).
-A preprocessed larger list of retrieved captions can be downloaded [here](https://drive.google.com/file/d/17OdjGGTr-6dDPhSvQ1IQM8QOa3_Ry42K/view?usp=sharing). You can also follow the [instructions](https://github.com/RitaRamo/smallcap) to retrieve captions by yourself.
+Follow the data downloading and preprocessing process as in [SmallCap](https://github.com/RitaRamo/smallcap). Retrieved captions for COCO can be downloaded [here](https://drive.google.com/file/d/1Eb5T5vHat1FeWKJ9FNCN8seSp0MHH913/view?usp=sharing), which includes the top 7 most relevant captions for each image. A preprocessed larger list (top 50) of retrieved captions can be downloaded [here](https://drive.google.com/file/d/17OdjGGTr-6dDPhSvQ1IQM8QOa3_Ry42K/view?usp=sharing). You can also follow the [instructions](https://github.com/RitaRamo/smallcap) to retrieve captions by yourself.
 
 ### Preprocess
 ```
